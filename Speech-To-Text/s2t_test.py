@@ -35,7 +35,8 @@ def transcribe_audio_chunk(filename, model):
     #print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
     for segment in segments:
-        print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
+        #print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
+        print(segment.text, end="/")
 
 # Function to save recorded audio chunks
 def save_audio_chunk(frames, model):
@@ -46,11 +47,11 @@ def save_audio_chunk(frames, model):
     wf.setframerate(RATE)
     wf.writeframes(b''.join(frames))
     wf.close()
-    print(f"Saved: {file_name}")
+    #print(f"Saved: {file_name}")
 
     processing_thread = threading.Thread(target=transcribe_audio_chunk, args=(file_name, model))
     processing_thread.start()
-###-------------------------------------------###
+
 def start_recording_overlap(stream, model):
     
     current_frames = []
@@ -67,7 +68,7 @@ def start_recording_overlap(stream, model):
 
             if elapsed_time >= RECORD_SECONDS + OVERLAP_SECONDS:
                 # Prepare the chunk for processing
-                processing_frames = overlap_frames + current_frames
+                processing_frames = current_frames
                 processing_start_time = next_chunk_start_time
 
                 # Update overlap for the next chunk
@@ -82,7 +83,7 @@ def start_recording_overlap(stream, model):
     except KeyboardInterrupt:
         print("\nRecording stopped by user.")
 
- ###-------------------------------------------###
+###-------------------------------------------###
 def start_recording(stream, model):
     start_time = time.time()
     current_frames = []
@@ -104,7 +105,7 @@ def start_recording(stream, model):
     # Save any remaining audio
     if current_frames:
         save_audio_chunk(current_frames, model)
-
+###-------------------------------------------###
 # Initialize PyAudio
 pa = pyaudio.PyAudio()
 

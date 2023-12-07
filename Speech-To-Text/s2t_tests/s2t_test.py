@@ -18,15 +18,16 @@ device_id = 6
 
 def transcribe_audio_chunk(filename, model, callback=None):
     
-    #"/home/robin/Documents/Tabletop-Assistant/Speech-To-Text/gettysburg10.wav"
-    segments, info = model.transcribe(filename, beam_size=5, vad_filter=True)
+    segments, info = model.transcribe(filename, beam_size=5, vad_filter=True, word_timestamps=True)
 
     #print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
     for segment in segments:
-        
-        #print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
-        print(segment.text, end=" ", flush=True)
+        for word in segment.words:
+            print("[%.2fs -> %.2fs] %s" % (word.start, word.end, word.word))
+            #print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
+            #print(segment.text, end=" ", flush=True)
+    
     if callback:
         callback(filename)
 
@@ -76,11 +77,8 @@ def start_recording_overlap(stream, model):
                 processing_frames = current_frames
                 processing_start_time = next_chunk_start_time
 
-                # Isolate non-overlapping frames by cutting out OVERLAP_SECONDS of frames from the start and end
-                session_chunk_frames = current_frames[int(OVERLAP_SECONDS * RATE / CHUNK):-int(OVERLAP_SECONDS * RATE / CHUNK)]
-
                 # Update overlap for the next chunk
-                overlap_frames = current_frames[-int(OVERLAP_SECONDS * RATE / CHUNK):]
+                overlap_frames = current_frames[-int(2*OVERLAP_SECONDS * RATE / CHUNK):]
                 current_frames = overlap_frames.copy()
 
                 # Update the start time for the next chunk
@@ -125,7 +123,8 @@ model_size = "tiny.en"
 model = WhisperModel(model_size, device="cpu", compute_type="int8")
 ###--- End Model Setup ---###
 
-# Initialize PyAudio
+
+###----------Setup Audio Stream----------###
 pa = pyaudio.PyAudio()
 
 # Open stream
@@ -138,6 +137,7 @@ stream = pa.open(format=FORMAT,
 
 print("Recording started. Press Ctrl+C to stop.")
 start_recording_overlap(stream, model)
+###----------End Setup Audio Stream----------###
 
 # Cleanup
 stream.stop_stream()

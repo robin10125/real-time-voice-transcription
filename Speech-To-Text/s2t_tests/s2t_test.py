@@ -12,7 +12,7 @@ CHANNELS = 1
 RATE = 48000
 CHUNK = 1024
 RECORD_SECONDS = 4  # Interval for saving audio
-OVERLAP_SECONDS = 2  # Interval for overlapping audio
+OVERLAP_SECONDS = 1  # Interval for overlapping audio
 device_id = 6
 ###--- End Audio recording parameters ---###
 
@@ -27,7 +27,8 @@ def transcribe_audio_chunk(filename, model, callback=None):
         
         #print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
         print(segment.text, end=" ", flush=True)
-
+    if callback:
+        callback(filename)
 
 # Function to save recorded audio chunks
 def process_audio_chunk(frames, model, repository_name):

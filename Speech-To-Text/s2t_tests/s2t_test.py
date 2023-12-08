@@ -19,7 +19,7 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 48000
 CHUNK = 1024
-RECORD_SECONDS = 2  # Interval for saving audio
+RECORD_SECONDS = 4  # Interval for saving audio
 OVERLAP_SECONDS = 1  # Interval for overlapping audio
 device_id = 6
 ###--- End Audio recording parameters ---###
@@ -43,12 +43,12 @@ def transcribe_audio_chunk(filename, model, callback=None):
             #check words that exist across chunks.  These words would be duplicated in the output
             if word.start <= RECORD_SECONDS + OVERLAP_SECONDS and word.end >= RECORD_SECONDS + OVERLAP_SECONDS and not trans_chunk:
                 trans_chunk = True
-                #print("(trans chunk word) [%.2fs -> %.2fs] %s" % (word.start, word.end, word.word))
-                print(word.word, end="", flush=True)
+                print("(trans chunk word) [%.2fs -> %.2fs] %s" % (word.start, word.end, word.word))
+                #print(word.word, end="", flush=True)
             if (word.end <= RECORD_SECONDS+OVERLAP_SECONDS and word.start >= OVERLAP_SECONDS):
                 if not trans_chunk:
-                    #print("[%.2fs -> %.2fs] %s" % (word.start, word.end, word.word))
-                    print(word.word, end="", flush=True)
+                    print("[%.2fs -> %.2fs] %s" % (word.start, word.end, word.word))
+                    #print(word.word, end="", flush=True)
                 trans_chunk = False
     #end = time.time()
     #print(end-start)
@@ -141,8 +141,8 @@ def start_recording(stream, model):
 ###############################################################################################
 
 ###--- Model Setup ---###
-#model_size = "tiny.en"
-model_size = "small.en"
+model_size = "tiny.en"
+#model_size = "small.en"
 # Run on GPU with FP16
 #model = WhisperModel(model_size, device="cuda", compute_type="float16")
 

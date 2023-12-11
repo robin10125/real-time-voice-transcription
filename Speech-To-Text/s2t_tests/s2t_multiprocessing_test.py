@@ -20,8 +20,8 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 48000
 CHUNK = 1024
-RECORD_SECONDS = 2  # Interval for saving audio
-OVERLAP_SECONDS = 1  # Interval for overlapping audio
+RECORD_SECONDS = 4  # Interval for saving audio
+OVERLAP_SECONDS = 2  # Interval for overlapping audio
 device_id = 6
 ###--- End Audio recording parameters ---###
 
@@ -101,7 +101,7 @@ def transcribe_audio_chunk(filename, model):
                 trans_chunk = False
 
 # process_audio_chunks handles the audio processing turning frames into a file like object
-def process_audio_chunk(frames, model, sample_width):
+def process_audio_chunk(frames, sample_width):
     
     #convert frames into wav file like BytesIO object
     wav_stream = io.BytesIO()
@@ -116,7 +116,7 @@ def process_audio_chunk(frames, model, sample_width):
     
     
 # start recording_overlap handles reading the data from audio stream and feeding it to the transcription pipeline
-def start_recording_overlap(stream, model, sample_width):
+def start_recording_overlap(stream, sample_width, input_queue):
     
     #frames holds the current audio chunk, overlap_frames holds a small portion of the end the previous chunk
     current_frames = []
@@ -136,15 +136,12 @@ def start_recording_overlap(stream, model, sample_width):
                 processing_frames = current_frames
 
                 # Process the chunk
-                wav_stream = process_audio_chunk(processing_frames, model, sample_width)
+                wav_stream = process_audio_chunk(processing_frames, sample_width)
+                input_queue.put(wav_stream)
 
                 # Update overlap for the next chunk
                 overlap_frames = current_frames[-int(2*OVERLAP_SECONDS * RATE / CHUNK):]
                 current_frames = overlap_frames.copy()
-
-                '''#Transcribe the chunk in a separate thread
-                processing_thread = threading.Thread(target=transcribe_audio_chunk, args=(wav_stream, model))
-                processing_thread.start() ''' 
     
     except KeyboardInterrupt:
         print("\nRecording stopped by user.")
@@ -164,11 +161,13 @@ def main():
 
     input_queue = multiprocessing.Queue()
     output_queue = multiprocessing.Queue()
-
-    input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
-    start_recording_overlap(stream, sample_width)
-
     
+    server_process = multiprocessing.Process(target=model_server, args=(input_queue, output_queue))
+    server_process.start()
+    
+    input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
+    start_recording_overlap(stream, sample_width, input_queue)
+
     #Cleanup 
     stream.stop_stream()
     stream.close()

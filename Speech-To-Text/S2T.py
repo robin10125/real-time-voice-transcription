@@ -31,7 +31,7 @@ def transcribe_audio_chunk(filename, model):
 
     trans_chunk = False
     segments, info = model.transcribe(filename, beam_size=5, vad_filter=True, word_timestamps=True)
-
+    print(segments)
     #print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
     for segment in segments:
         for word in segment.words:
@@ -60,8 +60,7 @@ def process_audio_chunk(frames, model, sample_width):
             wf.writeframes(frame)
     wav_stream.seek(0)
     return wav_stream
-    
-    
+        
 # start recording_overlap handles reading the data from audio stream and feeding it to the transcription pipeline
 def start_recording_overlap(stream, model, sample_width):
     

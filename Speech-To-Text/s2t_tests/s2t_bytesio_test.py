@@ -1,5 +1,4 @@
 import pyaudio
-import av
 import time
 import threading
 import os
@@ -28,9 +27,7 @@ device_id = 6
 
 ###--- Functions ---###
 
-def transcribe_audio_chunk(filename, model, callback=None):
-    
-    #start= time.time()
+def transcribe_audio_chunk(filename, model):
 
     trans_chunk = False
     segments, info = model.transcribe(filename, beam_size=5, vad_filter=True, word_timestamps=True)
@@ -49,12 +46,8 @@ def transcribe_audio_chunk(filename, model, callback=None):
                     #print("[%.2fs -> %.2fs] %s" % (word.start, word.end, word.word))
                     print(word.word, end="", flush=True)
                 trans_chunk = False
-    #end = time.time()
-    #print(end-start)
-    if callback:
-        callback(filename)
 
-
+# Function to convert audio stream into .wav file like BytesIO object
 def create_wav_bytesio(frames, channels, sample_width, sample_rate):
     wav_stream = io.BytesIO()
     with wave.open(wav_stream, 'wb') as wf:
@@ -66,20 +59,17 @@ def create_wav_bytesio(frames, channels, sample_width, sample_rate):
     wav_stream.seek(0)
     return wav_stream
 
-# Function to save recorded audio chunks
-def process_audio_chunk(frames, model):
+# process_audio_chunks handles the audio processing, taking the frames and reference to the data model as inputs
+def process_audio_chunk(frames, model, sample_width):
     
-    audio_stream = create_wav_bytesio(frames, CHANNELS, pa.get_sample_size(FORMAT), RATE)
+    audio_stream = create_wav_bytesio(frames, CHANNELS, sample_width, RATE)
     
-    with av.open(audio_stream) as container:
-        # Decode the first audio stream
-        frames = container.decode(audio=0)
-
-    #processing_thread = threading.Thread(target=transcribe_audio_chunk, args=(audio_stream, model))
-    #processing_thread.start()  
     
-
-def start_recording_overlap(stream, model):
+    processing_thread = threading.Thread(target=transcribe_audio_chunk, args=(audio_stream, model))
+    processing_thread.start()  
+    
+# start recording_overlap handles reading the data from audio stream and feeding it to the transcription pipeline
+def start_recording_overlap(stream, model, sample_width):
     
     #frames holds the current audio chunk, overlap_frames holds a small portion of the end the previous chunk
     current_frames = []
@@ -108,7 +98,7 @@ def start_recording_overlap(stream, model):
 
                 # Update the start time for the next chunk
                 next_chunk_start_time = int(time.time())
-                process_audio_chunk(processing_frames, model)
+                process_audio_chunk(processing_frames, model, sample_width)
 
     except KeyboardInterrupt:
         print("\nRecording stopped by user.")
@@ -117,34 +107,36 @@ def start_recording_overlap(stream, model):
 
 #####################################################################################################
 
-###--------- Model Setup ---------###
-#model_size = "tiny.en"
-model_size = "small.en"
+#main function
+def main():
+    
+    ###--------- Model Setup ---------###
+    model_size = "tiny.en"
+    #model_size = "base.en"
 
-# or run on GPU with INT8
-# model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
-# or run on CPU with INT8
-model = WhisperModel(model_size, device="cpu", compute_type="int8")
-###--- End Model Setup ---###
+    # or run on GPU with INT8
+    # model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
+    # or run on CPU with INT8
+    model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    ###--------- End Model Setup ---------###
 
-#####################################################################################################
+    ###---------Setup Audio Stream---------###
+    pa = pyaudio.PyAudio()
+    sample_width = pa.get_sample_size(FORMAT)
+    stream = pa.open(format=FORMAT,
+                    channels=CHANNELS,
+                    rate=RATE,
+                    input=True,
+                    input_device_index=device_id,
+                    frames_per_buffer=CHUNK)
 
-###----------Setup Audio Stream----------###
-pa = pyaudio.PyAudio()
+    input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
+    start_recording_overlap(stream, model, sample_width)
+    ###---------End Setup Audio Stream---------###
 
-# Open stream
-stream = pa.open(format=FORMAT,
-                 channels=CHANNELS,
-                 rate=RATE,
-                 input=True,
-                 input_device_index=device_id,
-                 frames_per_buffer=CHUNK)
-
-input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
-start_recording_overlap(stream, model)
-###----------End Setup Audio Stream----------###
-
-# Cleanup
-stream.stop_stream()
-stream.close()
-pa.terminate()
+    #Cleanup 
+    stream.stop_stream()
+    stream.close()
+    pa.terminate()
+    
+main()

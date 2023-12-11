@@ -12,7 +12,7 @@ from faster_whisper import WhisperModel
 # TODO: Switch from threading to multiprocessing module to utulize CPU more effectively for larger models
 #       Set up algorithm to chunk audio and text based off of periods of silence
 #       Feed text chunks to LLM
-#       Deal with multiprocessing termination
+#       Deal with multiprocessing termination -temporary stopgap is to send None to the queue
 #       Set up queue structure
 
 ###--- Audio recording parameters ---###
@@ -38,14 +38,14 @@ def model_server(input_queue, output_queue):
 
 
         # NOTE: Temporary shutdown signal
-        if audio_data is None:  
+        if audio_data is None: 
+            print("\nTranscription process terminated.") 
             output_queue.put(None)  # Signal display process to shut down
             break
 
         # Transcribe the audio data into segments of text
-        segments = model.transcribe(audio_data, beam_size=5, vad_filter=True, word_timestamps=True) 
+        segments, info = model.transcribe(audio_data, beam_size=5, vad_filter=True, word_timestamps=True) 
 
-        # Send the result to the display program
         output_queue.put(process_transcript(segments))
 
 def process_transcript(segments):
@@ -79,7 +79,6 @@ def initialize_model(size="tiny.en"):
     # or run on CPU with INT8
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
     return model
-
 
 def output_transcript(output_queue):
     while True:
@@ -116,7 +115,7 @@ def transcribe_audio_chunk(filename, model):
                     print(word.word, end="", flush=True)
                 trans_chunk = False
 
-# process_audio_chunks handles the audio processing turning frames into a file like object
+# process_audio_chunks handles the audio processing, turning frames into a file like object
 def process_audio_chunk(frames, sample_width):
     
     #convert frames into wav file like BytesIO object
@@ -161,6 +160,7 @@ def start_recording_overlap(stream, sample_width, input_queue):
     
     except KeyboardInterrupt:
         print("\nRecording stopped by user.")
+        input_queue.put(None)  # Signal model process to shut down
 
 def main():
 
@@ -180,19 +180,20 @@ def main():
     output_queue = multiprocessing.Queue()
     
     server_process = multiprocessing.Process(target=model_server, args=(input_queue, output_queue))
-    display_proccess = multiprocessing.Process(target=output_transcript, args=(output_queue,))
+    display_process = multiprocessing.Process(target=output_transcript, args=(output_queue,))
 
     server_process.start()
-    display_proccess.start()
+    display_process.start()
     ###--------- End Multiprocessing Setup ---------###
 
     #Wait for user input to start recording
     input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
     start_recording_overlap(stream, sample_width, input_queue)
-
+    server_process.join()
+    display_process.join()
     #Cleanup 
     server_process.terminate()
-    display_proccess.terminate()
+    display_process.terminate()
 
     stream.stop_stream()
     stream.close()

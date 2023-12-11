@@ -1,19 +1,18 @@
 import pyaudio
+import tkinter as tk
 import time
-import threading
-import os
 import io
 import wave
-
 import multiprocessing
-
 from faster_whisper import WhisperModel
 
 # TODO: Switch from threading to multiprocessing module to utulize CPU more effectively for larger models
 #       Set up algorithm to chunk audio and text based off of periods of silence
 #       Feed text chunks to LLM
-#       Deal with multiprocessing termination -temporary stopgap is to send None to the queue
+#       Deal with multiprocessing termination -temporary stopgap is to send None to the queue and check for it
 #       Set up queue structure
+#       Make sure if multiple data chunks are added to the input or output queue, that they are all processed,
+#           and not just the most recently added chunk
 
 ###--- Audio recording parameters ---###
 FORMAT = pyaudio.paInt16
@@ -26,7 +25,10 @@ device_id = 6
 ###--- End Audio recording parameters ---###
 
 ###############################################################################################
-######------ Test code for multiprocessing ------######
+
+######------ Functions ------######
+
+#- Multiprocessing functions -#
 
 def model_server(input_queue, output_queue):
     
@@ -88,11 +90,29 @@ def output_transcript(output_queue):
             break
         print(text_data, end="", flush=True)
 
+#TODO: Check effects of blocking behavior of queue.get on the tkinter window
+def output_to_window(output_queue):
+    root = tk.Tk()
+    root.title("Tabletop Assistant")
+    root.geometry("800x600")
+    root.configure(bg="grey")
+    text_box = tk.Text(root, bg="grey", fg="white")
+    text_box.pack()
+    while True:
+        text_data = output_queue.get()
+        if text_data is None:
+            print("\nDisplay process terminated.")
+            break
+        text_box.insert(tk.END, text_data)
+        text_box.see(tk.END)
+        root.update_idletasks()
+        root.update()
 
-######------ End Test code for multiprocessing ------######
+#- End Multiprocessing functions -#
+
 ###############################################################################################
 
-###--- Functions ---###
+#- Audio processing functions -#
 
 #transcribe_audio_chunk handles the transcription of the audio chunk
 def transcribe_audio_chunk(filename, model):
@@ -129,9 +149,8 @@ def process_audio_chunk(frames, sample_width):
     wav_stream.seek(0)
     return wav_stream
     
-    
 # start recording_overlap handles reading the data from audio stream and feeding it to the transcription pipeline
-def start_recording_overlap(stream, sample_width, input_queue):
+def process_stream(stream, sample_width, input_queue):
     
     #frames holds the current audio chunk, overlap_frames holds a small portion of the end the previous chunk
     current_frames = []
@@ -161,6 +180,7 @@ def start_recording_overlap(stream, sample_width, input_queue):
     except KeyboardInterrupt:
         print("\nRecording stopped by user.")
         input_queue.put(None)  # Signal model process to shut down
+#- End Audio processing functions -#
 
 def main():
 
@@ -180,7 +200,8 @@ def main():
     output_queue = multiprocessing.Queue()
     
     server_process = multiprocessing.Process(target=model_server, args=(input_queue, output_queue))
-    display_process = multiprocessing.Process(target=output_transcript, args=(output_queue,))
+    #display_process = multiprocessing.Process(target=output_transcript, args=(output_queue,))
+    display_process = multiprocessing.Process(target=output_to_window, args=(output_queue,))
 
     server_process.start()
     display_process.start()
@@ -188,7 +209,7 @@ def main():
 
     #Wait for user input to start recording
     input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
-    start_recording_overlap(stream, sample_width, input_queue)
+    process_stream(stream, sample_width, input_queue)
     server_process.join()
     display_process.join()
     #Cleanup 

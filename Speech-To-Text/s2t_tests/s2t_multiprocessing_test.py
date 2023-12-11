@@ -36,9 +36,15 @@ def model_server(input_queue, output_queue):
         #TODO check sync of input_queue.get
         audio_data = input_queue.get()
 
+
+        # NOTE: Temporary shutdown signal
+        if audio_data is None:  
+            output_queue.put(None)  # Signal display process to shut down
+            break
+
         # Transcribe the audio data into segments of text
         segments = model.transcribe(audio_data, beam_size=5, vad_filter=True, word_timestamps=True) 
-        
+
         # Send the result to the display program
         output_queue.put(process_transcript(segments))
 
@@ -73,6 +79,16 @@ def initialize_model(size="tiny.en"):
     # or run on CPU with INT8
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
     return model
+
+
+def output_transcript(output_queue):
+    while True:
+        text_data = output_queue.get()
+        if text_data is None:
+            print("\nDisplay process terminated.")
+            break
+        print(text_data, end="", flush=True)
+
 
 ######------ End Test code for multiprocessing ------######
 ###############################################################################################
@@ -159,16 +175,25 @@ def main():
                     frames_per_buffer=CHUNK)
     ###---------End Setup Audio Stream---------###
 
+    ###--------- Multiprocessing Setup ---------###
     input_queue = multiprocessing.Queue()
     output_queue = multiprocessing.Queue()
     
     server_process = multiprocessing.Process(target=model_server, args=(input_queue, output_queue))
+    display_proccess = multiprocessing.Process(target=output_transcript, args=(output_queue,))
+
     server_process.start()
-    
+    display_proccess.start()
+    ###--------- End Multiprocessing Setup ---------###
+
+    #Wait for user input to start recording
     input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
     start_recording_overlap(stream, sample_width, input_queue)
 
     #Cleanup 
+    server_process.terminate()
+    display_proccess.terminate()
+
     stream.stop_stream()
     stream.close()
     pa.terminate()

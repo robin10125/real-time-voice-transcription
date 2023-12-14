@@ -19,7 +19,11 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 48000
 CHUNK = 1024
-RECORD_SECONDS = 4  # Interval for saving audio
+RECORD_SECONDS = 3  # Interval for saving audio
+
+PRIOR_OVERLAP_SECONDS = 10  
+POSTERIOR_OVERLAP_SECONDS = 2  
+
 OVERLAP_SECONDS = 2  # Interval for overlapping audio
 device_id = 6
 ###--- End Audio recording parameters ---###
@@ -37,7 +41,7 @@ def model_server(input_queue, output_queue):
         #Receive audio data from the recording program
         #TODO check sync of input_queue.get
         audio_data = input_queue.get()
-
+        print("audio data:", audio_data)
         # NOTE: Temporary shutdown signal
         if audio_data is None: 
             print("\nTranscription process terminated.") 
@@ -46,8 +50,8 @@ def model_server(input_queue, output_queue):
 
         # Transcribe the audio data into segments of text
         segments, info = model.transcribe(audio_data, beam_size=5, vad_filter=True, word_timestamps=True)
-        for segment in segments: 
-            print(segment)
+         
+        print(segments)
         output_queue.put(process_transcript(segments))
 
 def process_transcript(segments):
@@ -143,7 +147,7 @@ def process_stream(stream, sample_width, input_queue):
             # Calculate elapsed time
             elapsed_time = len(current_frames) * CHUNK / RATE
 
-            if (elapsed_time >= RECORD_SECONDS + 2*OVERLAP_SECONDS) or True:
+            if (elapsed_time >= RECORD_SECONDS + PRIOR_OVERLAP_SECONDS + POSTERIOR_OVERLAP_SECONDS):
                 
                 # Prepare the chunk for processing
                 processing_frames = current_frames
@@ -152,9 +156,9 @@ def process_stream(stream, sample_width, input_queue):
                 wav_stream = process_audio_chunk(processing_frames, sample_width)
                 input_queue.put(wav_stream)
 
-                # Update overlap for the next chunk
-                overlap_frames = current_frames[-int(2*OVERLAP_SECONDS * RATE / CHUNK):]
-                current_frames = overlap_frames.copy()
+                #remove RECORDING_SECONDS + POSTERIOR_OVERLAP_SECONDS of frames from the start of current_frames
+                #TODO: Make sure garbage collection is working efficiently for this code, as it will be constantly making new lists
+                current_frames = current_frames[int((RECORD_SECONDS + POSTERIOR_OVERLAP_SECONDS) * RATE / CHUNK):]
     
     except KeyboardInterrupt:
         print("\nRecording stopped by user.")
@@ -184,6 +188,7 @@ def main():
 
     server_process.start()
     display_process.start()
+
     ###--------- End Multiprocessing Setup ---------###
 
     #Wait for user input to start recording

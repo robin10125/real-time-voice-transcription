@@ -37,11 +37,13 @@ device_id = 6
 def model_server(input_queue, output_queue):
     
     model = initialize_model()
+    transcript_list=[]
+    prev_words=[]
     while True:
         #Receive audio data from the recording program
         #TODO check sync of input_queue.get
         audio_data = input_queue.get()
-        print("audio data:", audio_data)
+        time_at = time.time()
         # NOTE: Temporary shutdown signal
         if audio_data is None: 
             print("\nTranscription process terminated.") 
@@ -50,30 +52,57 @@ def model_server(input_queue, output_queue):
 
         # Transcribe the audio data into segments of text
         segments, info = model.transcribe(audio_data, beam_size=5, vad_filter=True, word_timestamps=True)
-         
-        print(segments)
-        output_queue.put(process_transcript(segments))
+        
+        word_list = []
+        for segment in segments:
+            for word in segment.words:
+                word_list.append(word.word)
+        merge_transcripts(word_list, transcript_list)
+        words = process_transcript(segments)
+
+        prev_words=word_list.copy()
+
+        output = str(time_at)+": "+words+"\n"
+        output_queue.put(output)
+
+def merge_transcripts(word_list, transcript_list):
+    #finds the optimal point of overlap offset and rewrites the end of transcript list based off of word_list
+    pass
+
+def longest_shared_substring(text1, text2):
+    m, n = len(text1), len(text2)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    longest = 0
+    end_index = 0
+
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if text1[i - 1] == text2[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+                if dp[i][j] > longest:
+                    longest = dp[i][j]
+                    end_index = i
+            else:
+                dp[i][j] = 0
+
+    return text1[end_index - longest: end_index]
+
+def merge_texts(text1, text2):
+    overlap = longest_shared_substring(text1, text2)
+    overlap_len = len(overlap)
+    merged_text = text1[:-overlap_len] + text2 if overlap_len > 0 else text1 + text2
+    return merged_text   
+
 
 def process_transcript(segments):
 
-    trans_chunk = False
     output_string= ""
     #print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
     for segment in segments:
-        for word in segment.words:
-            
-            #check words that exist across chunks.  These words would be duplicated in the output
-            if word.start <= RECORD_SECONDS + OVERLAP_SECONDS and word.end >= RECORD_SECONDS + OVERLAP_SECONDS and not trans_chunk:
-                trans_chunk = True
-                #output_string += "(trans chunk word) [%.2fs -> %.2fs] %s" % (word.start, word.end, word.word)
-                output_string += word.word
-                
-            if (word.end <= RECORD_SECONDS+OVERLAP_SECONDS and word.start >= OVERLAP_SECONDS):
-                if not trans_chunk:
-                    #output_string += "[%.2fs -> %.2fs] %s" % (word.start, word.end, word.word)
-                    output_string += word.word
-                trans_chunk = False
+        for word in segment.words: 
+            output_string += word.word
+               
 
     return output_string
 
@@ -138,7 +167,7 @@ def process_stream(stream, sample_width, input_queue):
     #frames holds the current audio chunk, overlap_frames holds a small portion of the end the previous chunk
     current_frames = []
     overlap_frames = []
-    start_time = time.time()
+    
     try:
         while True:
             data = stream.read(CHUNK, exception_on_overflow=False)

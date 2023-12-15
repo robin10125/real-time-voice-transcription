@@ -19,8 +19,8 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 48000
 CHUNK = 1024
-RECORD_SECONDS = 4  # Interval for saving audio
-OVERLAP_SECONDS = 2  # Interval for overlapping audio
+RECORD_SECONDS = 2  # Interval for saving audio
+OVERLAP_SECONDS = 1  # Interval for overlapping audio
 device_id = 6
 ###--- End Audio recording parameters ---###
 
@@ -46,8 +46,7 @@ def model_server(input_queue, output_queue):
 
         # Transcribe the audio data into segments of text
         segments, info = model.transcribe(audio_data, beam_size=5, vad_filter=True, word_timestamps=True)
-        for segment in segments: 
-            print(segment)
+        
         output_queue.put(process_transcript(segments))
 
 def process_transcript(segments):
@@ -143,7 +142,7 @@ def process_stream(stream, sample_width, input_queue):
             # Calculate elapsed time
             elapsed_time = len(current_frames) * CHUNK / RATE
 
-            if (elapsed_time >= RECORD_SECONDS + 2*OVERLAP_SECONDS) or True:
+            if (elapsed_time >= RECORD_SECONDS + 2*OVERLAP_SECONDS):
                 
                 # Prepare the chunk for processing
                 processing_frames = current_frames

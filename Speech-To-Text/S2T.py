@@ -19,7 +19,7 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 48000
 CHUNK = 1024
-RECORD_SECONDS = 2  # Interval for saving audio
+RECORD_SECONDS = 4  # Interval for saving audio
 OVERLAP_SECONDS = 1  # Interval for overlapping audio
 device_id = 6
 ###--- End Audio recording parameters ---###

@@ -4,6 +4,7 @@ import time
 import io
 import wave
 import multiprocessing
+import difflib
 from faster_whisper import WhisperModel
 
 # TODO: Switch from threading to multiprocessing module to utulize CPU more effectively for larger models
@@ -19,12 +20,8 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 48000
 CHUNK = 1024
-RECORD_SECONDS = 3  # Interval for saving audio
 
-PRIOR_OVERLAP_SECONDS = 10  
-POSTERIOR_OVERLAP_SECONDS = 2  
-
-OVERLAP_SECONDS = 2  # Interval for overlapping audio
+AUDIO_CHUNK_LENGTH = 10 # Length of audio chunks in seconds
 device_id = 6
 ###--- End Audio recording parameters ---###
 
@@ -34,7 +31,7 @@ device_id = 6
 
 #- Multiprocessing functions -#
 
-def model_server(input_queue, output_queue):
+def model_server1(input_queue, output_queue):
     
     model = initialize_model()
     transcript_list=[]
@@ -54,57 +51,92 @@ def model_server(input_queue, output_queue):
         segments, info = model.transcribe(audio_data, beam_size=5, vad_filter=True, word_timestamps=True)
         
         word_list = []
+        trans_chunk = False
         for segment in segments:
             for word in segment.words:
+                if word.start <= RECORD_SECONDS + POSTERIOR_OVERLAP_SECONDS and word.end >= RECORD_SECONDS + POSTERIOR_OVERLAP_SECONDS and not trans_chunk:
+                    trans_chunk = True
+                    #output_string += "(trans chunk word) [%.2fs -> %.2fs] %s" % (word.start, word.end, word.word)
+                    output_string += word.word
+                
+                if word.start >= PRIOR_OVERLAP_SECONDS-POSTERIOR_OVERLAP_SECONDS and word.end <= POSTERIOR_OVERLAP_SECONDS+RECORD_SECONDS: 
+                    if not trans_chunk:
+                        transcript_list.append(word.word)
+                    trans_chunk = False
+
                 word_list.append(word.word)
+                
+        
         merge_transcripts(word_list, transcript_list)
+        
+        
         words = process_transcript(segments)
 
-        prev_words=word_list.copy()
+        
 
         output = str(time_at)+": "+words+"\n"
         output_queue.put(output)
 
-def merge_transcripts(word_list, transcript_list):
-    #finds the optimal point of overlap offset and rewrites the end of transcript list based off of word_list
-    pass
 
-def longest_shared_substring(text1, text2):
-    m, n = len(text1), len(text2)
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
-    longest = 0
-    end_index = 0
+#TODO: Implement verified/immutable transcript vs unverified transcript, so that verified transcript is not changed or taking up compuation resources
+def model_server(input_queue, output_queue, buffer_prune_queue):
+    
+    model = initialize_model()
+    
+    unconfirmed_transcript=''
+    confirmed_transcript=''
+    while True:
+        #Receive audio data from the recording program
+        #TODO check sync of input_queue.get
+        audio_data = input_queue.get()
+        time_at = time.time()
+        # NOTE: Temporary shutdown signal
+        if audio_data is None: 
+            print("\nTranscription process terminated.") 
+            output_queue.put(None)  # Signal display process to shut down
+            break
 
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            if text1[i - 1] == text2[j - 1]:
-                dp[i][j] = dp[i - 1][j - 1] + 1
-                if dp[i][j] > longest:
-                    longest = dp[i][j]
-                    end_index = i
-            else:
-                dp[i][j] = 0
+        # Transcribe the audio data into segments of text
+        segments, info = model.transcribe(audio_data, beam_size=5, vad_filter=True, word_timestamps=True)
+        
+        words_chunk=''
+        words_list = []
+    
+        for segment in segments:
+            for word in segment.words:
+                if "." in word.word:
+                    pass
+                words_list.append((word.start, word.end, word.word))
+                
 
-    return text1[end_index - longest: end_index]
+        print(f'length of chunk: {len(words_chunk)}')
+        print(f'Chunk: {words_chunk}')
 
-def merge_texts(text1, text2):
-    overlap = longest_shared_substring(text1, text2)
-    overlap_len = len(overlap)
-    merged_text = text1[:-overlap_len] + text2 if overlap_len > 0 else text1 + text2
-    return merged_text   
+        t_prime = transcript[-len(words_chunk):]
+        #print("t': "+t_prime)
+
+        t_merge = merge_transcripts(t_prime, words_chunk)
+        #print("Merge: " + t_merge)
+
+        transcript = transcript[:-len(words_chunk)] + t_merge
+        #print("Full transcript: " + transcript)
+
+        output = (str(time_at), transcript)
+        output_queue.put(output)
 
 
-def process_transcript(segments):
+def merge_transcripts(t_prime, words_chunk):
+    s = difflib.SequenceMatcher(None, t_prime, words_chunk)
+    match = s.find_longest_match(0, len(t_prime), 0, len(words_chunk))
+    
+    #TODO: Use content agnostic time based function to add words together in this case
+    if match.size < 3:
+        return t_prime
 
-    output_string= ""
-    #print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
+    overlap_start = match.b
+    return t_prime + words_chunk[overlap_start + match.size:]
 
-    for segment in segments:
-        for word in segment.words: 
-            output_string += word.word
-               
 
-    return output_string
 
 def initialize_model(size="tiny.en"):
 
@@ -132,11 +164,14 @@ def output_to_window(output_queue):
     text_box = tk.Text(root, bg="grey", fg="white")
     text_box.pack()
     while True:
-        text_data = output_queue.get()
+        time, text_data = output_queue.get()
+        display = text_data + "\nLast Updated: " + time 
         if text_data is None:
             print("\nDisplay process terminated.")
             break
-        text_box.insert(tk.END, text_data)
+        
+        text_box.delete(1.0, tk.END)
+        text_box.insert(tk.END, display)
         text_box.see(tk.END)
         root.update_idletasks()
         root.update()
@@ -162,7 +197,8 @@ def process_audio_chunk(frames, sample_width):
     return wav_stream
     
 # start recording_overlap handles reading the data from audio stream and feeding it to the transcription pipeline
-def process_stream(stream, sample_width, input_queue):
+# TODO Change chunking behaviour to be based off of sentence content.  This requires getting transcriptions back from the model server
+def process_stream(stream, sample_width, input_queue, buffer_prune_queue):
     
     #frames holds the current audio chunk, overlap_frames holds a small portion of the end the previous chunk
     current_frames = []
@@ -176,8 +212,10 @@ def process_stream(stream, sample_width, input_queue):
             # Calculate elapsed time
             elapsed_time = len(current_frames) * CHUNK / RATE
 
-            if (elapsed_time >= RECORD_SECONDS + PRIOR_OVERLAP_SECONDS + POSTERIOR_OVERLAP_SECONDS):
-                
+            if (elapsed_time >= AUDIO_CHUNK_LENGTH):
+                prune_signal = buffer_prune_queue.get_nowait()
+                if prune_signal is not None:
+                    current_frames = current_frames[int(prune_signal * RATE / CHUNK):]
                 # Prepare the chunk for processing
                 processing_frames = current_frames
 
@@ -210,7 +248,7 @@ def main():
     ###--------- Multiprocessing Setup ---------###
     input_queue = multiprocessing.Queue()
     output_queue = multiprocessing.Queue()
-    
+    buffer_prune_queue = multiprocessing.Queue()
     server_process = multiprocessing.Process(target=model_server, args=(input_queue, output_queue))
     #display_process = multiprocessing.Process(target=output_transcript, args=(output_queue,))
     display_process = multiprocessing.Process(target=output_to_window, args=(output_queue,))
@@ -222,6 +260,7 @@ def main():
 
     #Wait for user input to start recording
     input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
+    output_queue.put((str(0),"Begin!"))
     process_stream(stream, sample_width, input_queue)
     server_process.join()
     display_process.join()

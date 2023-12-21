@@ -1,10 +1,8 @@
 import pyaudio
 import tkinter as tk
-import time
 import io
 import wave
 import multiprocessing
-import difflib
 from faster_whisper import WhisperModel
 import datetime
 import uuid
@@ -37,19 +35,19 @@ device_id = 6
 #- Multiprocessing functions -#
 
 #TODO: Implement verified/immutable transcript vs unverified transcript, so that verified transcript is not changed or taking up compuation resources
-def model_server(input_queue, output_queue, buffer_prune_queue, log_queue):
+def model_server(input_queue, output_queue, buffer_prune_queue):
     
-    model = initialize_model(log_queue)
+    model = initialize_model()
     
     confirmed_transcript=''
     while True:
 
         #Receive audio data from the recording program
-        audio_data, chunk_id = input_queue.get()
+        audio_data = input_queue.get()
 
         # NOTE: Temporary shutdown signal
         if audio_data is None: 
-            log_queue.put(f'{datetime.datetime.now().strftime("%H:%M:%S")}|TERMINATED_TRANSCRIPTION_PROCESS|Termination process signal recieved by model server')
+            
             print("\nTranscription process terminated.") 
             output_queue.put(None)  # Signal display process to shut down
             break
@@ -95,31 +93,17 @@ def model_server(input_queue, output_queue, buffer_prune_queue, log_queue):
         #Forward loop through words_list to create the unconfirmed transcript (executes regardless of num sentences)
         for k in range(confirmed_signal, len(words_list)):
             unconfirmed_transcript += words_list[k][2]
-        log_queue.put(f'{datetime.datetime.now().strftime("%H:%M:%S")}|{chunk_id}|TRANSCRIPT|{confirmed_transcript}{unconfirmed_transcript}')
+
         output = (str(time_at), confirmed_transcript, unconfirmed_transcript)
         output_queue.put(output)
 
-#TODO: merge_transcripts is currently unused, delete later if evidently not needed after testing
-def merge_transcripts(t_prime, words_chunk):
-    s = difflib.SequenceMatcher(None, t_prime, words_chunk)
-    match = s.find_longest_match(0, len(t_prime), 0, len(words_chunk))
-    
-    #TODO: Use content agnostic time based function to add words together in this case
-    if match.size < 3:
-        return t_prime
-
-    overlap_start = match.b
-    return t_prime + words_chunk[overlap_start + match.size:]
-
-def initialize_model(log_queue, size="tiny.en"):
+def initialize_model(size="tiny.en"):
 
     model_size = size
     # or run on GPU with INT8
     # model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
     # or run on CPU with INT8
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
-    log_queue.put(f'{datetime.datetime.now().strftime("%H:%M:%S")}|INITIALIZED_MODEL|{model_size}')
-
     return model
 
 #TODO: Rewrite with new transcript structure
@@ -172,17 +156,6 @@ def output_to_window(output_queue):
         root.update_idletasks()
         root.update()
 
-def logger(log_queue, repository_path):
-    session_file = f'{repository_path}/session_log_{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}_{uuid.uuid4()}.txt'
-    while True:
-        log_data = log_queue.get()
-        if log_data is None:
-            print("\nLog process terminated.")
-            break
-        with open(session_file, "a") as log_file:
-            log_file.write(log_data + "\n")  # Write the log data to the file
-        log_file.close()
-
 #- End Multiprocessing functions -#
 
 ###############################################################################################
@@ -202,7 +175,8 @@ def process_audio_chunk(frames, sample_width):
             wf.writeframes(frame)
     wav_stream.seek(0)
     return wav_stream
-def save_audio_chunk(frames, sample_width, logger_queue, chunk_id, repository_path):
+
+def save_audio_chunk(frames, sample_width, chunk_id, repository_path):
     
     file_name = f"{repository_path}/{chunk_id}.wav"
     wf = wave.open(file_name, 'wb')
@@ -211,14 +185,11 @@ def save_audio_chunk(frames, sample_width, logger_queue, chunk_id, repository_pa
     wf.setframerate(RATE)
     wf.writeframes(b''.join(frames))
     wf.close()   
-    logger_queue.put(f'{datetime.datetime.now().strftime("%H:%M:%S")}|{chunk_id}|SAVED_AUDIO_CHUNK|{file_name}')
-
+    
 # start recording_overlap handles reading the data from audio stream and feeding it to the transcription pipeline
 # TODO Change chunking behaviour to be based off of sentence content.  This requires getting transcriptions back from the model server
-def process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_queue, repository_path):
+def process_stream(stream, sample_width, input_queue, buffer_prune_queue, repository_path):
     
-    log_queue.put(f'{datetime.datetime.now().strftime("%H:%M:%S")}|STARTED_RECORDING|')
-
     #frames holds the current audio chunk
     current_frames = []
     silence = False
@@ -233,7 +204,7 @@ def process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_qu
 
             # TODO Implement silence detection
             if (elapsed_time - reference_time >= AUDIO_CHUNK_LENGTH) or silence == True:
-                chunk_id = f'audio_chunk_{datetime.datetime.now().strftime("%H:%M:%S")}_{uuid.uuid4()}'
+                chunk_id = f'audio_chunk_{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}_{uuid.uuid4()}'
                 # buffer_prune queue will get pushed to it the time where the audio buffer should be pruned when its appropriate
                 #TODO: Implement sentinel value for checking queue emptyness instead of .empty()
                 if not buffer_prune_queue.empty():
@@ -246,7 +217,7 @@ def process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_qu
 
                 # Process the chunk
                 wav_stream = process_audio_chunk(processing_frames, sample_width)
-                save_audio_chunk(processing_frames, sample_width, log_queue, chunk_id, repository_path)
+                save_audio_chunk(processing_frames, sample_width, chunk_id, repository_path)
 
                 input_queue.put((wav_stream, chunk_id))
                 
@@ -254,18 +225,16 @@ def process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_qu
     
     except KeyboardInterrupt:
         print("\nRecording stopped by user.")
-        #send custom chunk id
-        input_queue.put((None,f'termination_chunk_{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}_{uuid.uuid4()}'))  # Signal model process to shut down
-        log_queue.put(None)
+        input_queue.put(None)  # Signal model process to shut down
+
 #- End Audio processing functions -#
 
 def main():
 
-    ###---------Setup Logging---------###
+   
     session_id = f'{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}_{uuid.uuid4()}'
     repository_path = f"log_files/{session_id}"
     os.makedirs(repository_path, exist_ok=True)
-    ###---------End Setup Logging---------###
 
     ###---------Setup Audio Stream---------###
     pa = pyaudio.PyAudio()
@@ -282,32 +251,30 @@ def main():
     input_queue = multiprocessing.Queue()
     output_queue = multiprocessing.Queue()
     buffer_prune_queue = multiprocessing.Queue()
-    log_queue = multiprocessing.Queue()
+    
 
-    server_process = multiprocessing.Process(target=model_server, args=(input_queue, output_queue, buffer_prune_queue, log_queue))
+    server_process = multiprocessing.Process(target=model_server, args=(input_queue, output_queue, buffer_prune_queue))
     display_process = multiprocessing.Process(target=output_transcript, args=(output_queue,))
     #display_process = multiprocessing.Process(target=output_to_window, args=(output_queue,))
 
-    log_process = multiprocessing.Process(target=logger, args=(log_queue,repository_path,))
 
     server_process.start()
     display_process.start()
-    log_process.start()
+    
     ###--------- End Multiprocessing Setup ---------###
 
     #Wait for user input to start recording
     input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
     output_queue.put((str(0),"Begin!",""))
-    process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_queue, repository_path)
+    process_stream(stream, sample_width, input_queue, buffer_prune_queue, repository_path)
 
 
     server_process.join()
     display_process.join()
-    log_process.join()
+  
     #Cleanup 
     server_process.terminate()
     display_process.terminate()
-    log_process.terminate()
 
     stream.stop_stream()
     stream.close()

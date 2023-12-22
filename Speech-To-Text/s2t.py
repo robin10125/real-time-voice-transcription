@@ -3,22 +3,19 @@ import tkinter as tk
 import io
 import wave
 import multiprocessing
-import difflib
 from faster_whisper import WhisperModel
 import datetime
 import uuid
 import os 
 
-# TODO: Switch from threading to multiprocessing module to utulize CPU more effectively for larger models
+# TODO: Measure compute and memory of multiprocessing modules
 #       Set up algorithm to chunk audio and text based off of periods of silence
 #       Feed text chunks to LLM
 #       Deal with multiprocessing termination -temporary stopgap is to send None to the queue and check for it
-#       Set up queue structure
-#       Make sure if multiple data chunks are added to the input or output queue, that they are all processed,
-#           and not just the most recently added chunk
+#       Refine queue structure
 #       Implement silence detection
-#       Finish implementing sentence aware audio buffer pruning
-#       Test microphone input to make sure it is working properly, and to prompt user to fix problems if it is not
+#       Integrate unconfirmed and confirmed transcript pieces together for LLM inference
+#       Test microphone input to make sure it is working properly, and to prompt user toroblems if it is not
 #       Clean up logging
 #       Implement program uptime clock
 
@@ -62,9 +59,7 @@ def model_server(input_queue, output_queue, buffer_prune_queue, log_queue):
 
         # NOTE: Temporary shutdown signal
         if audio_data is None: 
-            log_queue.put(f'{datetime.datetime.now().strftime("%H:%M:%S")}|TERMINATED_TRANSCRIPTION_PROCESS|Termination process signal received by model server')
             print("\nTranscription process terminated.") 
-            output_queue.put(None)  # Signal display process to shut down
             break
         
         time_at = datetime.datetime.now().strftime("%H:%M:%S")
@@ -136,13 +131,36 @@ def initialize_model(log_queue, size="tiny.en"):
 
     return model
 
-#TODO: Rewrite with new transcript structure
-def output_transcript(output_queue):
+def output_transcript(output_queue, session_id):
+    """
+    Writes the transcripts to a file.
+
+    Args:
+        output_queue (Queue): The queue containing the text data.
+        session_id (str): The ID of the session.
+
+    Returns:
+        None
+    """
+    session_repo = f'{session_id}/transcripts/'
     while True:
         text_data = output_queue.get()
+        
         if text_data is None:
+            with open(session_file, "a") as transcript_file:
+                transcript_file.write(unconfirmed_transcript)  
+                transcript_file.close()
             print("\nDisplay process terminated.")
             break
+
+        confirmed_transcript = text_data[1]
+        unconfirmed_transcript = text_data[2]
+
+        session_file = f'{session_repo}/transcript.txt'
+        with open(session_file, "a") as transcript_file:
+            transcript_file.write(confirmed_transcript)  # Write the log data to the file
+        transcript_file.close()
+
         print(f'Confirmed transcript: \n {text_data[1]} \n' 
             f'Unconfirmed transcript: \n {text_data[2]} \n Last Updated: {text_data[0]} \n'
             f'############################################################################################################################# \n')
@@ -151,7 +169,15 @@ def output_transcript(output_queue):
 #TODO: Rewrite with new transcript structure
 #TODO: Add scroll bar to window
 #TODO: Add resizeable window
+#TODO: Rewrite with new transcript structure
 def output_to_window(output_queue):
+    """
+    Display the transcript data in a GUI window.
+    
+    Args:
+        output_queue (Queue): A queue containing the transcript data to be displayed.
+    """
+    
     root = tk.Tk()
     root.title("Tabletop Assistant")
     root.geometry("800x600")
@@ -187,6 +213,16 @@ def output_to_window(output_queue):
         root.update()
 
 def logger(log_queue, repository_path):
+    """
+    Writes log data from a queue to a file.
+
+    Args:
+        log_queue (Queue): The queue containing log data.
+        repository_path (str): The path to the repository.
+
+    Returns:
+        None
+    """
     session_file = f'{repository_path}/session_log_{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}_{uuid.uuid4()}.txt'
     while True:
         log_data = log_queue.get()
@@ -283,7 +319,7 @@ def process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_qu
 
             # TODO Implement silence detection
             if (elapsed_time - reference_time >= AUDIO_CHUNK_LENGTH) or silence == True:
-                chunk_id = f'achunk_{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}_{uuid.uuid4()}'
+                chunk_id = f'AudioChunk_{datetime.datetime.now().strftime("%H:%M:%S")}_{uuid.uuid4()}'
                 # buffer_prune queue will get pushed to it the time where the audio buffer should be pruned when its appropriate
                 #TODO: Implement sentinel value for checking queue emptyness instead of .empty()
                 if not buffer_prune_queue.empty():
@@ -301,12 +337,10 @@ def process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_qu
                 input_queue.put((wav_stream, chunk_id))
                 
                 
-    
     except KeyboardInterrupt:
         print("\nRecording stopped by user.")
-        #send custom chunk id
-        input_queue.put((None,f'termination_chunk_{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}_{uuid.uuid4()}'))  # Signal model process to shut down
-        log_queue.put(None)
+        return
+        
 #- End Audio processing functions -#
 
 def main():
@@ -335,7 +369,7 @@ def main():
     log_queue = multiprocessing.Queue()
 
     server_process = multiprocessing.Process(target=model_server, args=(input_queue, output_queue, buffer_prune_queue, log_queue))
-    display_process = multiprocessing.Process(target=output_transcript, args=(output_queue,))
+    display_process = multiprocessing.Process(target=output_transcript, args=(output_queue,session_id,))
     #display_process = multiprocessing.Process(target=output_to_window, args=(output_queue,))
 
     log_process = multiprocessing.Process(target=logger, args=(log_queue,repository_path,))
@@ -347,8 +381,13 @@ def main():
 
     #Wait for user input to start recording
     input("Program started. Press any key to start recording.  Press Ctrl+C to stop.")
-    output_queue.put((str(0),"Begin!",""))
+    output_queue.put((str(0),"Beginning transcription! \n",""))
     process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_queue, repository_path)
+
+    #send custom chunk id
+    input_queue.put((None,f'termination_chunk_{datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}_{uuid.uuid4()}'))  # Signal model process to shut down
+    log_queue.put(None)
+    output_queue.put(None)  # Signal display process to shut down
 
 
     server_process.join()
@@ -363,7 +402,7 @@ def main():
     stream.close()
     pa.terminate()
 
-###--- End Functions ---### 
+######------ End Functions ------###### 
 
 if __name__ == "__main__":
     main()

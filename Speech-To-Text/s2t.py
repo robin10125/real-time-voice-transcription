@@ -7,6 +7,9 @@ from faster_whisper import WhisperModel
 import datetime
 import uuid
 import os 
+import cProfile
+import pstats
+
 
 # TODO: Measure compute and memory of multiprocessing modules
 #       Set up algorithm to chunk audio and text based off of periods of silence
@@ -343,6 +346,17 @@ def process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_qu
         
 #- End Audio processing functions -#
 
+#- Profiling functions -#
+def profile_model_server():
+    pass
+def profile_output_transcript():
+    pass
+def profile_audio_processing():
+    pass
+def profile_logger():
+    pass
+
+#- End Profiling functions -#
 def main():
 
     ###---------Setup Logging---------###

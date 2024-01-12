@@ -134,6 +134,7 @@ def initialize_model(log_queue, size="tiny.en"):
 
     return model
 
+
 def output_transcript(output_queue, session_id):
     """
     Writes the transcripts to a file.
@@ -145,7 +146,15 @@ def output_transcript(output_queue, session_id):
     Returns:
         None
     """
-    session_repo = f'{session_id}/transcripts/'
+    
+    #Create directory for storing transcripts
+    session_directory = session_id
+    session_file = os.path.join(session_directory, 'transcript.txt')
+
+    # Check if the directory exists, and create it if it does not
+    if not os.path.exists(session_directory):
+        os.makedirs(session_directory)
+    
     while True:
         text_data = output_queue.get()
         
@@ -159,7 +168,6 @@ def output_transcript(output_queue, session_id):
         confirmed_transcript = text_data[1]
         unconfirmed_transcript = text_data[2]
 
-        session_file = f'{session_repo}/transcript.txt'
         with open(session_file, "a") as transcript_file:
             transcript_file.write(confirmed_transcript)  # Write the log data to the file
         transcript_file.close()
@@ -323,9 +331,11 @@ def process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_qu
             # TODO Implement silence detection
             if (elapsed_time - reference_time >= AUDIO_CHUNK_LENGTH) or silence == True:
                 chunk_id = f'AudioChunk_{datetime.datetime.now().strftime("%H:%M:%S")}_{uuid.uuid4()}'
-                # buffer_prune queue will get pushed to it the time where the audio buffer should be pruned when its appropriate
-                #TODO: Implement sentinel value for checking queue emptyness instead of .empty()
+                
+                #buffer_prune queue will get pushed to it the time where the audio buffer should be pruned when its appropriate
+                #TODO: Implement sentinel value for checking queue emptyness instead of .empty()?
                 if not buffer_prune_queue.empty():
+                    #TODO: profile how long it takes to prune the buffer with list slicing
                     prune_signal = buffer_prune_queue.get()
                     current_frames = current_frames[int(prune_signal * RATE / CHUNK):]
                 

@@ -3,7 +3,14 @@ import tkinter as tk
 import io
 import wave
 import multiprocessing
+
+import numpy as np
 from faster_whisper import WhisperModel
+from faster_whisper.vad import get_speech_timestamps
+from faster_whisper.vad import get_vad_model
+from faster_whisper.vad import VadOptions
+from faster_whisper.audio import decode_audio
+
 import datetime
 import uuid
 import os 
@@ -22,13 +29,17 @@ import pstats
 #       Clean up logging
 #       Implement program uptime clock
 
+#       Use voice detection to have adaptable latency for model prediction batches
+###############################################################################################
+
 ###--- Audio recording parameters ---###
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 48000
 CHUNK = 1024
 
-AUDIO_CHUNK_LENGTH = 10 # Length of audio chunks in seconds
+SILENCE_CHUNK_LENGTH = 1 # Length of silence chunks in seconds
+AUDIO_CHUNK_LENGTH = 4 # Length of audio chunks in seconds
 device_id = 6
 ###--- End Audio recording parameters ---###
 
@@ -315,23 +326,43 @@ def process_stream(stream, sample_width, input_queue, buffer_prune_queue, log_qu
 
     start_time=datetime.datetime.now().strftime("%H:%M:%S")   
     log_queue.put(f'{start_time}|STARTED_RECORDING|')
-
+    get_vad_model()
     #frames holds the current audio chunk
     current_frames = []
     silence = False
+    speech = False
 
+    vad_parameters = VadOptions(threshold=0.6, max_speech_duration_s=20)
+    
     try:
+        print("###---Begin recording.---###")
+
         reference_time = 0
         while True:
             data = stream.read(CHUNK, exception_on_overflow=False)
             current_frames.append(data)
             # Calculate elapsed time
             elapsed_time = len(current_frames) * CHUNK / RATE
+            if elapsed_time - reference_time >= SILENCE_CHUNK_LENGTH:
+                
+                wav_stream = process_audio_chunk(current_frames, sample_width)
+
+                decoded_audio= decode_audio(wav_stream)
+                speech_chunks = get_speech_timestamps(audio=decoded_audio, vad_options=vad_parameters)
+                #speech_chunks = get_speech_timestamps(audio= np.frombuffer(b''.join(current_frames), dtype=np.float32), vad_options=vad_parameters)
+                print(f'speech_chunks: {speech_chunks}')
+                if len(speech_chunks) == 0:
+                    silence = True
+                    speech = False
+                else:
+                    speech = True
+                
 
             # TODO Implement silence detection
-            if (elapsed_time - reference_time >= AUDIO_CHUNK_LENGTH) or silence == True:
-                chunk_id = f'AudioChunk_{datetime.datetime.now().strftime("%H:%M:%S")}_{uuid.uuid4()}'
+            if (elapsed_time - reference_time >= AUDIO_CHUNK_LENGTH) or (speech == True and silence == True):
                 
+                silence = False
+                chunk_id = f'AudioChunk_{datetime.datetime.now().strftime("%H:%M:%S")}_{uuid.uuid4()}'
                 #buffer_prune queue will get pushed to it the time where the audio buffer should be pruned when its appropriate
                 #TODO: Implement sentinel value for checking queue emptyness instead of .empty()?
                 if not buffer_prune_queue.empty():
@@ -430,3 +461,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+    

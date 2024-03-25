@@ -20,7 +20,7 @@ with torch.no_grad():
     sentence_embeddings = model_output[0][:, 0]
 # normalize embeddings
 sentence_embeddings = torch.nn.functional.normalize(sentence_embeddings, p=2, dim=1)
-print("Sentence embeddings:", sentence_embeddings)
+print("Sentence embedding:", sentence_embeddings)
 
 
 

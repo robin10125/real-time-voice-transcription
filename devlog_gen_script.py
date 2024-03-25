@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
 
 # Define the start and end dates for January 2024
-start_date = datetime(2024, 1, 1)
-end_date = datetime(2024, 2, 1)
+start_date = datetime(2024, 3, 1)
+end_date = datetime(2024, 4, 1)
 
 # Open a text file to write the data
-with open('January_2024_Work_Log.txt', 'w') as file:
+with open('March_2024_Work_Log.txt', 'w') as file:
     # Loop through each day of January 2024
     current_date = start_date
     while current_date != end_date:
@@ -21,4 +21,4 @@ with open('January_2024_Work_Log.txt', 'w') as file:
         # Move to the next day
         current_date += timedelta(days=1)
 file.close()
-print("The work log for January 2024 has been created.")
+print("The work log for Feb 2024 has been created.")
